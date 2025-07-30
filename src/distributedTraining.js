@@ -1,4 +1,4 @@
-import * as dcp from 'dcp-client';
+import * as dcpClient from 'dcp-client';
 import {
   DecisionTreeClassifier as DTClassifier,
   DecisionTreeRegression as DTRegression,
@@ -8,7 +8,8 @@ import {
   MatrixColumnSelectionView,
 } from 'ml-matrix';
 
-import * as Utils from './utils';
+import * as Utils from './utils.js';
+import { compute } from 'dcp-client/dcp.js';
 
 /**
    * Train a random forest with the given training set and labels in a distribted manner.
@@ -18,8 +19,13 @@ import * as Utils from './utils';
    * @param {Matrix|Array} trainingSet
    * @param {Array} trainingValues
    */
-export function distributedTrain(trainingSet, trainingValues) {
+export async function distributedTrain(trainingSet, trainingValues) {
   // TODO: add DCP args
+  // Singleton initialiation of DCP
+  if (!distributedTrain.dcpInitialize) {
+    distributedTrain.dcpInitialize = dcpClient.init();
+  }
+  const dcp = await distributedTrain.dcpInitialize();
 
   // TODO: import DCP
   /**
@@ -106,6 +112,20 @@ export function distributedTrain(trainingSet, trainingValues) {
   let oobResults = new Array(this.nEstimators);
 
   // TODO: this is fundamental loop for DCP to parallelize
+  compute.for();
+  
+  if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
+    this.oobResults = Utils.collectOOB(
+      oobResults,
+      trainingValues,
+      this.selection.bind(this),
+    );
+  }
+}
+
+async function workFn(input, trainingMatrix) {
+  // extract info from slice arguments
+
   for (let i = 0; i < this.nEstimators; ++i) {
     let res = this.useSampleBagging
       ? Utils.examplesBaggingWithReplacement(
@@ -147,12 +167,5 @@ export function distributedTrain(trainingSet, trainingValues) {
         predicted: this.estimators[i].predict(xoob),
       };
     }
-  }
-  if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
-    this.oobResults = Utils.collectOOB(
-      oobResults,
-      trainingValues,
-      this.selection.bind(this),
-    );
   }
 }
