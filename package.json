@@ -4,6 +4,7 @@
   "description": "Random forest for classification and regression",
   "main": "random-forest.js",
   "module": "src/index.js",
+  "type": "module",
   "files": [
     "src",
     "random-forest.js",
