@@ -1,12 +1,14 @@
+import * as dcpClient from 'dcp-client';
+import { compute } from 'dcp-client/dcp.js';
 import {
   DecisionTreeClassifier as DTClassifier,
   DecisionTreeRegression as DTRegression,
 } from 'ml-cart';
 import {
   Matrix,
-  WrapperMatrix2D,
-  MatrixTransposeView,
   MatrixColumnSelectionView,
+  MatrixTransposeView,
+  WrapperMatrix2D,
 } from 'ml-matrix';
 
 import * as Utils from './utils';
@@ -188,6 +190,119 @@ export class RandomForestBase {
       );
     }
   }
+
+  /**
+   * Train a random forest with the given training set and labels in a distributed manner.
+   * Training is separated into "slices", each of which handles training one or more trees.
+   * Distributed computing is handled using DCP. A valid DCP key must be configured on the
+   * machine running this code for distributed training to work.
+   * @param {Matrix|Array} trainingSet
+   * @param {Array} trainingValues
+   */
+  async distributedTrain(dcpArgs, trainingSet, trainingValues) {
+
+  let {
+    treesPerSlice: estimatorsPerSlice
+  } = dcpArgs;
+  // TODO: validate DCP args (?)
+
+  // DCP should only be initialized once.
+  if (!distributedTrain.dcpInitialize) {
+    distributedTrain.dcpInitialize = dcpClient.init();
+    await distributedTrain.dcpInitialize();
+  }
+
+  // Prep job info
+  const totalSlices = Math.ceil(this.nEstimators / estimatorsPerSlice);
+
+  // Prep slice arguments
+  const sliceSeeds = Utils.generateSeeds(this.seed, totalSlices);
+
+  // Prep job-wide arguments
+  trainingSet = Matrix.checkMatrix(trainingSet);
+  const jobArgs = {
+    maxFeatures: this.maxFeatures || trainingSet.columns,
+    numberFeatures: trainingSet.columns,
+    numberSamples: trainingSet.rows,
+  }
+
+  if (Utils.checkFloat(this.maxFeatures)) {
+    this.n = Math.floor(trainingSet.columns * this.maxFeatures);
+  } else if (Number.isInteger(this.maxFeatures)) {
+    if (this.maxFeatures > trainingSet.columns) {
+      throw new RangeError(
+        `The maxFeatures parameter should be less than ${trainingSet.columns}`,
+      );
+    } else {
+      this.n = this.maxFeatures;
+    }
+  } else {
+    throw new RangeError(
+      `Cannot process the maxFeatures parameter ${this.maxFeatures}`,
+    );
+  }
+
+  if (this.maxSamples) {
+    if (this.maxSamples < 0) {
+      throw new RangeError(`Please choose a positive value for maxSamples`);
+    } else {
+      if (Utils.isFloat(this.maxSamples)) {
+        if (this.maxSamples > 1.0) {
+          throw new RangeError(
+            'Please choose either a float value between 0 and 1 or a positive integer for maxSamples',
+          );
+        } else {
+          this.numberSamples = Math.floor(trainingSet.rows * this.maxSamples);
+        }
+      } else if (Number.isInteger(this.maxSamples)) {
+        if (this.maxSamples > trainingSet.rows) {
+          throw new RangeError(
+            `The maxSamples parameter should be less than ${trainingSet.rows}`,
+          );
+        } else {
+          this.numberSamples = this.maxSamples;
+        }
+      }
+    }
+  }
+
+  if (this.maxSamples) {
+    if (trainingSet.rows !== this.numberSamples) {
+      let tmp = new Matrix(this.numberSamples, trainingSet.columns);
+      for (let j = 0; j < this.numberSamples; j++) {
+        tmp.removeRow(0);
+      }
+      for (let i = 0; i < this.numberSamples; i++) {
+        tmp.addRow(trainingSet.getRow(i));
+      }
+      trainingSet = tmp;
+
+      trainingValues = trainingValues.slice(0, this.numberSamples);
+    }
+  }
+
+
+  this.estimators = new Array(this.nEstimators);
+  this.indexes = new Array(this.nEstimators);
+
+  let oobResults = new Array(this.nEstimators);
+
+  // TODO: this is fundamental loop for DCP to parallelize
+  const jobArgs = {
+    isClassifier: this.isClassifier,
+  }
+  const inputSet = [];
+  const workParams = [jobArgs, trainingSet, trainingValues];
+  const job = compute.for(inputSet, workFunction, workParams);
+
+  if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
+    this.oobResults = Utils.collectOOB(
+      oobResults,
+      trainingValues,
+      this.selection.bind(this),
+    );
+  }
+}
 
   /**
    * Evaluate the feature importances for each tree in the ensemble
