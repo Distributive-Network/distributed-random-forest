@@ -13,6 +13,8 @@ import {
 
 import * as Utils from './utils';
 
+let dcpInitializer;
+
 /**
  * @class RandomForestBase
  */
@@ -206,11 +208,11 @@ export class RandomForestBase {
   } = dcpArgs;
   // TODO: validate DCP args (?)
 
-  // DCP should only be initialized once.
-  if (!distributedTrain.dcpInitialize) {
-    distributedTrain.dcpInitialize = dcpClient.init();
-    await distributedTrain.dcpInitialize();
+  // DCP should only be initialized once. Ensures this is true even in async contexts.
+  if (!dcpInitializer) {
+    dcpInitializer = dcpClient.init()
   }
+  const dcp = await dcpInitializer;
 
   // Prep job info
   const totalSlices = Math.ceil(this.nEstimators / estimatorsPerSlice);
