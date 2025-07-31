@@ -1,5 +1,4 @@
 import * as dcpClient from 'dcp-client';
-import { compute } from 'dcp-client/dcp.js';
 import {
   DecisionTreeClassifier as DTClassifier,
   DecisionTreeRegression as DTRegression,
@@ -214,18 +213,32 @@ export class RandomForestBase {
   }
   const dcp = await dcpInitializer;
 
-  // Prep job info
+  // Prep general purpose vars
   const totalSlices = Math.ceil(this.nEstimators / estimatorsPerSlice);
 
   // Prep slice arguments
   const sliceSeeds = Utils.generateSeeds(this.seed, totalSlices);
+  const sliceEstimators = Array(totalSlices).fill(estimatorsPerSlice);
+  const leftoverEstimators = this.nEstimators % estimatorsPerSlice;
+  if (leftoverEstimators) {
+    sliceEstimators[sliceEstimators.length-1] = leftoverEstimators;
+  }
+  const sliceArgs = Array(totalSlices);
+  for (let i = 0; i < totalSlices; ++i) {
+    sliceArgs[i] = {
+      seed: sliceSeeds[i],
+      numEstimators: sliceEstimators[i],
+    }
+  }
 
   // Prep job-wide arguments
   trainingSet = Matrix.checkMatrix(trainingSet);
+  trainingSet = trainingSet.to2DArray();
   const jobArgs = {
     maxFeatures: this.maxFeatures || trainingSet.columns,
     numberFeatures: trainingSet.columns,
     numberSamples: trainingSet.rows,
+    isClassifier: this.isClassifier,
   }
 
   if (Utils.checkFloat(this.maxFeatures)) {
@@ -290,12 +303,10 @@ export class RandomForestBase {
   let oobResults = new Array(this.nEstimators);
 
   // TODO: this is fundamental loop for DCP to parallelize
-  const jobArgs = {
-    isClassifier: this.isClassifier,
-  }
   const inputSet = [];
   const workParams = [jobArgs, trainingSet, trainingValues];
   const job = compute.for(inputSet, workFunction, workParams);
+  job.requires('ml-random-forest');
 
   if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
     this.oobResults = Utils.collectOOB(
