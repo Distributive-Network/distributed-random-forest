@@ -39,4 +39,47 @@ describe('Utils', () => {
     expect(new Set(data.usedIndex).size).toBe(cols - 5);
     expect(data.X.columns).toBe(20);
   });
+
+  describe('generateSeeds()', () => {
+
+    it('should generate n numerical seeds', () => {
+      const seeds = Utils.generateSeeds(400, 10);
+      expect(seeds).toHaveLength(10);
+      for (let seed of seeds) {
+        expect(typeof seed).toBe('number');
+        expect(seed).not.toBeNaN();
+      }
+    });
+
+    it('should generate unique seeds', () => {
+      const seeds = Utils.generateSeeds(500, 10);
+      const seenSeeds = {};
+      for (let seed of seeds) {
+        expect(seenSeeds[seed]).toBeUndefined();
+        seenSeeds[seed] = true;
+      }
+    });
+
+    it('should generate different seeds for a different input seed', () => {
+      const seeds1 = Utils.generateSeeds(500, 10);
+      const seeds2 = Utils.generateSeeds(600, 10);
+      for (let i in seeds1) {
+        expect(seeds1[i]).not.toStrictEqual(seeds2[i]);
+      }
+    });
+
+    it('should generate different seeds for a different input size', () => {
+      const seeds1 = Utils.generateSeeds(700, 5);
+      const seeds2 = Utils.generateSeeds(700, 10);
+      for (let i in seeds1) {
+        expect(seeds1[i]).not.toStrictEqual(seeds2[i]);
+      }
+    });
+
+    it('should generate seeds reproducibly', () => {
+      const seeds1 = Utils.generateSeeds(1000, 10);
+      const seeds2 = Utils.generateSeeds(1000, 10);
+      expect(seeds1).toStrictEqual(seeds2);
+    });
+  });
 });

@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 import { Matrix } from 'ml-matrix';
 import * as Random from 'random-js';
 
@@ -153,3 +155,14 @@ export const collectOOB = (oob, y, aggregate) => {
   }
   return res;
 };
+
+export function generateSeeds(initialSeed, n) {
+  const seeds = Array(n);
+  for (let i = 0; i < n; ++i) {
+    const input = `${initialSeed}:${i}:${n}`;
+    const hash = createHash('sha256').update(input).digest('hex');
+    const newSeed = parseInt(hash.slice(0, 8), 16);
+    seeds[i] = newSeed;
+  }
+  return seeds;
+}
