@@ -48,6 +48,7 @@ describe('Utils', () => {
       for (let seed of seeds) {
         expect(typeof seed).toBe('number');
         expect(seed).not.toBeNaN();
+        expect(Math.floor(seed)).toStrictEqual(seed); // is integer
       }
     });
 
@@ -68,11 +69,11 @@ describe('Utils', () => {
       }
     });
 
-    it('should generate different seeds for a different input size', () => {
+    it('should generate the same seeds sequence for a different input size with the same seed', () => {
       const seeds1 = Utils.generateSeeds(700, 5);
       const seeds2 = Utils.generateSeeds(700, 10);
       for (let i in seeds1) {
-        expect(seeds1[i]).not.toStrictEqual(seeds2[i]);
+        expect(seeds1[i]).toStrictEqual(seeds2[i]);
       }
     });
 

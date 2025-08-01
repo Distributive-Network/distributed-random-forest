@@ -156,10 +156,16 @@ export const collectOOB = (oob, y, aggregate) => {
   return res;
 };
 
+/**
+ * Deterministicaly generates an array of pseudorandom seeds from a single initial seed.
+ * @param {String|Number} initialSeed - The initial seed value.
+ * @param {Number} n - The number of seeds to generate.
+ * @returns {Number[]} A seeded array of new seeds.
+ */
 export function generateSeeds(initialSeed, n) {
   const seeds = Array(n);
   for (let i = 0; i < n; ++i) {
-    const input = `${initialSeed}:${i}:${n}`;
+    const input = `${initialSeed}:${i}`;
     const hash = createHash('sha256').update(input).digest('hex');
     const newSeed = parseInt(hash.slice(0, 8), 16);
     seeds[i] = newSeed;
