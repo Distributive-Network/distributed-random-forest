@@ -203,7 +203,8 @@ export class RandomForestBase {
   async distributedTrain(dcpArgs, trainingSet, trainingValues) {
 
   let {
-    treesPerSlice: estimatorsPerSlice
+    estimatorsPerSlice,
+    computeGroups,
   } = dcpArgs;
   // TODO: validate DCP args (?)
 
@@ -305,8 +306,13 @@ export class RandomForestBase {
   // TODO: this is fundamental loop for DCP to parallelize
   const inputSet = [];
   const workParams = [jobArgs, trainingSet, trainingValues];
-  const job = compute.for(inputSet, workFunction, workParams);
-  job.requires('ml-random-forest');
+  const job = dcp.compute.for(inputSet, workFunction, workParams);
+  job.requires('distributed-ml-random-forest'); // TODO: get this added to the package manager
+  if (computeGroups) {
+    job.computeGroups = computeGroups; // TODO: ask if this is correct/necessary to do
+  }
+  job.public.name = dcpArgs.name || 'distributed-ml-random-forest';
+  job.public.description = dcpArgs.description || `Training ${estimatorsPerSlice} trees for a random forest model`;
 
   if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
     this.oobResults = Utils.collectOOB(
@@ -455,7 +461,7 @@ export class RandomForestBase {
 
 export async function workFunction(sliceInput, jobArgs, trainingSet, trainingValues) {
   // extract info from slice arguments
-  let [currentSeed, randomForestModelParams] = sliceInput;
+  let [currentSeed, randomForestModelParams, nEstimators] = sliceInput;
 
   let Estimator;
   if (jobArgs.isClassifier) {
@@ -464,9 +470,8 @@ export async function workFunction(sliceInput, jobArgs, trainingSet, trainingVal
     Estimator = DTRegression;
   }
 
-  progress(0);
-
-  for (let i = 0; i < this.nEstimators; ++i) {
+  for (let i = 0; i < nEstimators; ++i) {
+    progress(i / nEstimators);
     let res = this.useSampleBagging
       ? Utils.examplesBaggingWithReplacement(
           trainingSet,
