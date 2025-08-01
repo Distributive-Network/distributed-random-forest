@@ -460,15 +460,24 @@ export class RandomForestBase {
 }
 
 export async function workFunction(sliceInput, jobArgs, trainingSet, trainingValues) {
-  // extract info from slice arguments
-  let [currentSeed, randomForestModelParams, nEstimators] = sliceInput;
+  // TODO: "require" can be used here just fien, but we gotta make ESLint Happy
+  const ml = require('ml'); // TODO: what do we need to actually import here?
 
-  let Estimator;
+  // extract info from slice and job arguments
+  let [currentSeed, nEstimators] = sliceInput;
+  let {
+    modelParams
+  } = jobArgs;
+  let EstimatorClass;
   if (jobArgs.isClassifier) {
-    Estimator = DTClassifier;
+    EstimatorClass = DTClassifier;
   } else {
-    Estimator = DTRegression;
+    EstimatorClass = DTRegression;
   }
+
+  const estimators = new Array(sliceInput.nEstimators);
+  const indexes = new Array(sliceInput.nEstimators);
+  const oobResults = new Array(sliceInput.nEstimators);
 
   for (let i = 0; i < nEstimators; ++i) {
     progress(i / nEstimators);
@@ -494,23 +503,33 @@ export async function workFunction(sliceInput, jobArgs, trainingSet, trainingVal
     // Other implementations of random forests apply feature bagging at every split during tree generation.
     // So I think it would be better to implement it at the CART level, not here.
 
-    res = Utils.featureBagging(X, this.n, this.replacement, currentSeed);
+    res = Utils.featureBagging(X, modelParams.n, modelParams.replacement, currentSeed);
     X = res.X;
     currentSeed = res.seed;
 
-    // TODO: setting these will need to be done outside the work fn (although a work fn may train multiple estimators)
-    this.indexes[i] = res.usedIndex;
-    this.estimators[i] = new Estimator(this.treeOptions);
-    this.estimators[i].train(X, y);
+    // TODO: what are these supposed to do?
+    indexes[i] = res.usedIndex;
+    estimators[i] = new EstimatorClass(modelParams.treeOptions);
+    estimators[i].train(X, y);
 
     // TODO: fix OOB issue (see issues section of original repo)
-
-    if (!this.noOOB && this.useSampleBagging) {
-      let xoob = new MatrixColumnSelectionView(Xoob, this.indexes[i]);
+    if (!modelParams.noOOB && modelParams.useSampleBagging) {
+      let xoob = new MatrixColumnSelectionView(Xoob, indexes[i]);
       oobResults[i] = {
         index: ioob,
-        predicted: this.estimators[i].predict(xoob),
+        predicted: estimators[i].predict(xoob),
       };
     }
   }
+
+  // TODO: need to confirm this works
+  const jsonEstimators = estimators.map(estimator => JSON.stringify(estimator));
+
+  const sliceResult = {
+    indexes,
+    jsonEstimators,
+    oobResults,
+  }
+
+  return sliceResult;
 }
