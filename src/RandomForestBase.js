@@ -197,6 +197,11 @@ export class RandomForestBase {
    * Training is separated into "slices", each of which handles training one or more trees.
    * Distributed computing is handled using DCP. A valid DCP key must be configured on the
    * machine running this code for distributed training to work.
+   * @param {Object} dcpArgs
+   * @param {Number} [dcpArgs.estimatorsPerSlice=5] - How many estimators to train in each slice. The final slice may have less than this.
+   * @param {Object[]} [dcpArgs.computeGroups] - An array of DCP compute group info objects (each with a "joinKey" and "joinSecret" string). Jobs will be deployed to these groups. Otherwise will run on the public network.
+   * @param {String} [dcpArgs.name] - Name of the DCP job to be deployed.
+   * @param {String} [dcpArgs.description] - Description for the DCP job to be deployed.
    * @param {Matrix|Array} trainingSet
    * @param {Array} trainingValues
    */
@@ -234,86 +239,60 @@ export class RandomForestBase {
 
   // Prep job-wide arguments
   trainingSet = Matrix.checkMatrix(trainingSet);
+  [trainingSet, trainingValues] = Utils.validateRFTrainingInputs(this, trainingSet, trainingValues);
   trainingSet = trainingSet.to2DArray();
   const jobArgs = {
+    isClassifier: this.isClassifier,
     maxFeatures: this.maxFeatures || trainingSet.columns,
     numberFeatures: trainingSet.columns,
     numberSamples: trainingSet.rows,
-    isClassifier: this.isClassifier,
+    useSampleBagging: this.useSampleBagging,
   }
-
-  if (Utils.checkFloat(this.maxFeatures)) {
-    this.n = Math.floor(trainingSet.columns * this.maxFeatures);
-  } else if (Number.isInteger(this.maxFeatures)) {
-    if (this.maxFeatures > trainingSet.columns) {
-      throw new RangeError(
-        `The maxFeatures parameter should be less than ${trainingSet.columns}`,
-      );
-    } else {
-      this.n = this.maxFeatures;
-    }
-  } else {
-    throw new RangeError(
-      `Cannot process the maxFeatures parameter ${this.maxFeatures}`,
-    );
-  }
-
-  if (this.maxSamples) {
-    if (this.maxSamples < 0) {
-      throw new RangeError(`Please choose a positive value for maxSamples`);
-    } else {
-      if (Utils.isFloat(this.maxSamples)) {
-        if (this.maxSamples > 1.0) {
-          throw new RangeError(
-            'Please choose either a float value between 0 and 1 or a positive integer for maxSamples',
-          );
-        } else {
-          this.numberSamples = Math.floor(trainingSet.rows * this.maxSamples);
-        }
-      } else if (Number.isInteger(this.maxSamples)) {
-        if (this.maxSamples > trainingSet.rows) {
-          throw new RangeError(
-            `The maxSamples parameter should be less than ${trainingSet.rows}`,
-          );
-        } else {
-          this.numberSamples = this.maxSamples;
-        }
-      }
-    }
-  }
-
-  if (this.maxSamples) {
-    if (trainingSet.rows !== this.numberSamples) {
-      let tmp = new Matrix(this.numberSamples, trainingSet.columns);
-      for (let j = 0; j < this.numberSamples; j++) {
-        tmp.removeRow(0);
-      }
-      for (let i = 0; i < this.numberSamples; i++) {
-        tmp.addRow(trainingSet.getRow(i));
-      }
-      trainingSet = tmp;
-
-      trainingValues = trainingValues.slice(0, this.numberSamples);
-    }
-  }
-
 
   this.estimators = new Array(this.nEstimators);
   this.indexes = new Array(this.nEstimators);
-
   let oobResults = new Array(this.nEstimators);
 
-  // TODO: this is fundamental loop for DCP to parallelize
-  const inputSet = [];
+  // DCP job setup
   const workParams = [jobArgs, trainingSet, trainingValues];
-  const job = dcp.compute.for(inputSet, workFunction, workParams);
+  const job = dcp.compute.for(sliceArgs, workFunction, workParams);
   job.requires('distributed-ml-random-forest'); // TODO: get this added to the package manager
+  // TODO: check proper syntax for local modules ^^^
   if (computeGroups) {
     job.computeGroups = computeGroups; // TODO: ask if this is correct/necessary to do
   }
   job.public.name = dcpArgs.name || 'distributed-ml-random-forest';
   job.public.description = dcpArgs.description || `Training ${estimatorsPerSlice} trees for a random forest model`;
+  // Log various DCP events for debugging purposes.
+  job.on('result', (resultObj) => console.log(`Result ${resultObj.sliceNumber} recieved.`));
+  job.on('console', console.log);
+  job.on('accepted', () => console.log('Training job is accepted and running. Job ID: ', job.id));
 
+  let jobResults;
+  if (jobArgs.localExec) {
+    jobResults = await job.localExec(1);
+  } else {
+    jobResults = await job.exec();
+  }
+
+  // TODO: collect, format, and assign trained estimators
+  let estIdx = 0;
+  for (let i = 0; i < jobResults.length; ++i) {
+    const sliceResults = jobResults[i];
+    for (let j = 0; j < sliceResults.jsonEstimators.length; ++j) {
+      let newEstimator;
+      if (this.isClassifier) {
+        newEstimator = DTClassifier.load(sliceResults.jsonEstimators[j])
+      } else {
+        newEstimator = DTRegression.load(sliceResults.jsonEstimators[j])
+      }
+
+      this.estimators[estIdx] = newEstimator;
+      estIdx++;
+    }
+  }
+
+  // TODO: figure out where this needs to go
   if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
     this.oobResults = Utils.collectOOB(
       oobResults,

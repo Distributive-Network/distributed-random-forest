@@ -172,3 +172,72 @@ export function generateSeeds(initialSeed, n) {
   }
   return seeds;
 }
+
+/**
+ * Checks compatibility between model parameters and training inputs. Updates the model
+ * with some computed values from the provided data. Throws an error if the training data is
+ * incompatible with model params.
+ * @param {RandomForestBase} model - The Random Forest Model to be updated/checked.
+ * @param {Matrix|Array} trainingSet - The training data Matrix.
+ * @param {Array} trainingValues - The training data values to be predicted.
+ * @returns {Array} The updated trainingSet and trainingValues. The RF model is modified inplace and is not returned.
+ */
+export function validateRFTrainingInputs(model, trainingSet, trainingValues) {
+  let updatedTrainingSet, updatedTrainingValues;
+
+  if (checkFloat(model.maxFeatures)) {
+    model.n = Math.floor(trainingSet.columns * model.maxFeatures);
+  } else if (Number.isInteger(model.maxFeatures)) {
+    if (model.maxFeatures > trainingSet.columns) {
+      throw new RangeError(
+        `The maxFeatures parameter should be less than ${trainingSet.columns}`,
+      );
+    } else {
+      model.n = model.maxFeatures;
+    }
+  } else {
+    throw new RangeError(
+      `Cannot process the maxFeatures parameter ${model.maxFeatures}`,
+    );
+  }
+
+  if (model.maxSamples) {
+    if (model.maxSamples < 0) {
+      throw new RangeError(`Please choose a positive value for maxSamples`);
+    } else {
+      if (isFloat(model.maxSamples)) {
+        if (model.maxSamples > 1.0) {
+          throw new RangeError(
+            'Please choose either a float value between 0 and 1 or a positive integer for maxSamples',
+          );
+        } else {
+          model.numberSamples = Math.floor(trainingSet.rows * model.maxSamples);
+        }
+      } else if (Number.isInteger(model.maxSamples)) {
+        if (model.maxSamples > trainingSet.rows) {
+          throw new RangeError(
+            `The maxSamples parameter should be less than ${trainingSet.rows}`,
+          );
+        } else {
+          model.numberSamples = model.maxSamples;
+        }
+      }
+    }
+  }
+
+  if (model.maxSamples) {
+    if (trainingSet.rows !== model.numberSamples) {
+      let tmp = new Matrix(model.numberSamples, trainingSet.columns);
+      for (let j = 0; j < model.numberSamples; j++) {
+        tmp.removeRow(0);
+      }
+      for (let i = 0; i < model.numberSamples; i++) {
+        tmp.addRow(trainingSet.getRow(i));
+      }
+      updatedTrainingSet = tmp;
+      updatedTrainingValues = trainingValues.slice(0, model.numberSamples);
+    }
+  }
+
+  return [updatedTrainingSet, updatedTrainingValues];
+}
