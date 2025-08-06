@@ -1,7 +1,7 @@
 import * as dcpClient from 'dcp-client';
 import {
-  DecisionTreeClassifier as DTClassifier,
-  DecisionTreeRegression as DTRegression,
+  DecisionTreeClassifier,
+  DecisionTreeRegression,
 } from 'ml-cart';
 import {
   Matrix,
@@ -256,17 +256,17 @@ export class RandomForestBase {
   // DCP job setup
   const workParams = [jobArgs, trainingSet, trainingValues];
   const job = dcp.compute.for(sliceArgs, workFunction, workParams);
-  job.requires('distributed-ml-random-forest'); // TODO: get this added to the package manager
-  // TODO: check proper syntax for local modules ^^^
+  job.requires('ml-cart');
+  job.requires('ml-matrix');
   if (computeGroups) {
     job.computeGroups = computeGroups; // TODO: ask if this is correct/necessary to do
   }
   job.public.name = dcpArgs.name || 'distributed-ml-random-forest';
   job.public.description = dcpArgs.description || `Training ${estimatorsPerSlice} trees for a random forest model`;
   // Log various DCP events for debugging purposes.
-  job.on('result', (resultObj) => console.log(`Result ${resultObj.sliceNumber} recieved.`));
-  job.on('console', console.log);
-  job.on('accepted', () => console.log('Training job is accepted and running. Job ID: ', job.id));
+  job.on('result', (resultObj) => console.log(`Result ${resultObj.sliceNumber} recieved.`)); // eslint-disable-line no-console
+  job.on('console', console.log); // eslint-disable-line no-console
+  job.on('accepted', () => console.log('Training job is accepted and running. Job ID: ', job.id)); // eslint-disable-line no-console
 
   let jobResults;
   if (jobArgs.localExec) {
@@ -275,30 +275,30 @@ export class RandomForestBase {
     jobResults = await job.exec();
   }
 
-  // TODO: collect, format, and assign trained estimators
   let estIdx = 0;
   for (let i = 0; i < jobResults.length; ++i) {
     const sliceResults = jobResults[i];
     for (let j = 0; j < sliceResults.jsonEstimators.length; ++j) {
       let newEstimator;
-      if (this.isClassifier) {
-        newEstimator = DTClassifier.load(sliceResults.jsonEstimators[j])
+      if (estIdx >= this.nEstimators) {
+        throw new Error("Random Forest Model received too many estimators from slices when training using DCP.")
+      } else if (this.isClassifier) {
+        newEstimator = DecisionTreeClassifier.load(sliceResults.jsonEstimators[j])
       } else {
-        newEstimator = DTRegression.load(sliceResults.jsonEstimators[j])
+        newEstimator = DecisionTreeRegression.load(sliceResults.jsonEstimators[j])
       }
-
       this.estimators[estIdx] = newEstimator;
       estIdx++;
     }
-  }
 
-  // TODO: figure out where this needs to go
-  if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
-    this.oobResults = Utils.collectOOB(
-      oobResults,
-      trainingValues,
-      this.selection.bind(this),
-    );
+    // ensure this is properly integrated
+    if (!this.noOOB && this.useSampleBagging && oobResults.length > 0) {
+      this.oobResults = Utils.collectOOB(
+        oobResults,
+        trainingValues,
+        this.selection.bind(this),
+      );
+    }
   }
 }
 
@@ -439,27 +439,32 @@ export class RandomForestBase {
 }
 
 export async function workFunction(sliceInput, jobArgs, trainingSet, trainingValues) {
-  // TODO: "require" can be used here just fien, but we gotta make ESLint Happy
-  const ml = require('ml'); // TODO: what do we need to actually import here?
+  const {
+    DecisionTreeClassifier,
+    DecisionTreeRegression,
+  } = require('ml-cart'); // eslint-disable-line no-undef
+  const {
+    MatrixColumnSelectionView,
+  } = require('ml-matrix'); // eslint-disable-line no-undef
 
   // extract info from slice and job arguments
-  let [currentSeed, nEstimators] = sliceInput;
+  let [currentSeed, numEstimators] = sliceInput;
   let {
     modelParams
   } = jobArgs;
   let EstimatorClass;
   if (jobArgs.isClassifier) {
-    EstimatorClass = DTClassifier;
+    EstimatorClass = DecisionTreeClassifier;
   } else {
-    EstimatorClass = DTRegression;
+    EstimatorClass = DecisionTreeRegression;
   }
 
   const estimators = new Array(sliceInput.nEstimators);
   const indexes = new Array(sliceInput.nEstimators);
   const oobResults = new Array(sliceInput.nEstimators);
 
-  for (let i = 0; i < nEstimators; ++i) {
-    progress(i / nEstimators);
+  for (let i = 0; i < numEstimators; ++i) {
+    progress(i / numEstimators); // eslint-disable-line no-undef
     let res = this.useSampleBagging
       ? Utils.examplesBaggingWithReplacement(
           trainingSet,
